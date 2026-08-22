@@ -2,13 +2,96 @@
  * @name RandomPick
  * @description Adds a random-pick button to Discover and Library. Jumps to a random item among what's currently shown, respecting any filters from other plugins (folders, watched, etc.).
  * @updateUrl none
- * @version 1.0.0
+ * @version 1.0.1
  * @author meli & Claude
  */
 
 (function () {
     const NS = "rp";
-    const ITEM_SELECTOR = 'a[class*="meta-item-container-"], div[class*="meta-item-container-"]';
+
+    // Shared micro-kit so multiple Stremio Enhanced plugins from the same
+    // author don't each spin up their own document-wide MutationObserver,
+    // duplicate the same DOM helpers, or inject the same CSS fix separately
+    // when several of them are installed and enabled together. Defined once
+    // by whichever of these plugins loads first; every other one just reuses
+    // it. Still fully self-contained if this is the only one active.
+    const sek = window.__sek || (function () {
+        const ITEM_SELECTOR = 'a[class*="meta-item-container-"], div[class*="meta-item-container-"]';
+        const waiters = [];
+        let observer = null;
+
+        function checkWaiters() {
+            for (let i = waiters.length - 1; i >= 0; i--) {
+                const w = waiters[i];
+                const el = w.find();
+                if (el) {
+                    waiters.splice(i, 1);
+                    w.resolve(el);
+                }
+            }
+        }
+
+        function ensureObserver() {
+            if (observer) return;
+            observer = new MutationObserver(checkWaiters);
+            observer.observe(document.body, { childList: true, subtree: true });
+        }
+
+        function waitFor(find) {
+            return new Promise((resolve) => {
+                const existing = find();
+                if (existing) return resolve(existing);
+                waiters.push({ find, resolve });
+                ensureObserver();
+            });
+        }
+
+        const kit = {
+            ITEM_SELECTOR,
+            waitForElm(selector, root) {
+                root = root || document;
+                return waitFor(() => root.querySelector(selector));
+            },
+            findScoped(wrapperSelector, innerSelector) {
+                const wrapper = document.querySelector(wrapperSelector);
+                return wrapper ? wrapper.querySelector(innerSelector) : null;
+            },
+            waitForScoped(wrapperSelector, innerSelector) {
+                return waitFor(() => kit.findScoped(wrapperSelector, innerSelector));
+            },
+            isWatched(el) {
+                return !!el.querySelector('[class*="watched-icon-layer-"]');
+            },
+            extractItemId(el) {
+                const href = el.getAttribute("href") || "";
+                const match = href.match(/#\/detail\/[^/]+\/([^/]+)/);
+                if (!match) return null;
+                try { return decodeURIComponent(match[1]); } catch (e) { return match[1]; }
+            },
+            extractType(el) {
+                const href = el.getAttribute("href") || "";
+                const match = href.match(/#\/detail\/([^/]+)\//);
+                return match ? match[1] : "other";
+            },
+            escapeHtml(str) {
+                const div = document.createElement("div");
+                div.textContent = str == null ? "" : String(str);
+                return div.innerHTML;
+            },
+            ensureFilterRowWrap() {
+                if (document.getElementById("sek-filter-wrap-fix")) return;
+                const style = document.createElement("style");
+                style.id = "sek-filter-wrap-fix";
+                style.textContent = '[class*="selectable-inputs-container-"] { flex-wrap: wrap !important; row-gap: 10px; }';
+                document.head.appendChild(style);
+            }
+        };
+
+        window.__sek = kit;
+        return kit;
+    })();
+
+    const ITEM_SELECTOR = sek.ITEM_SELECTOR;
 
     const ICON_DICE = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="3" width="18" height="18" rx="4" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="16" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="16" r="1.4" fill="currentColor"/><circle cx="16" cy="16" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg>`;
 
@@ -33,59 +116,18 @@
             @keyframes ${NS}-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
             .${NS}-flash { outline: 3px solid #7B5BF5 !important; outline-offset: 2px; border-radius: 8px; animation: ${NS}-pulse 0.6s ease; }
             @keyframes ${NS}-pulse { 0% { box-shadow: 0 0 0 0 rgba(123,91,245,0.7); } 100% { box-shadow: 0 0 0 14px rgba(123,91,245,0); } }
-
-            /* Multiple plugins append buttons to Stremio's own filter row,
-               which doesn't wrap by default - without this, extra buttons
-               get squeezed instead of flowing onto a new line. */
-            [class*="selectable-inputs-container-"] { flex-wrap: wrap !important; row-gap: 10px; }
         `;
         document.head.appendChild(style);
+        sek.ensureFilterRowWrap();
     }
 
-    function waitForElm(selector, root = document) {
-        return new Promise((resolve) => {
-            const existing = root.querySelector(selector);
-            if (existing) return resolve(existing);
-
-            const observer = new MutationObserver(() => {
-                const el = root.querySelector(selector);
-                if (el) {
-                    observer.disconnect();
-                    resolve(el);
-                }
-            });
-            observer.observe(root === document ? document.body : root, { childList: true, subtree: true });
-        });
-    }
+    const waitForElm = sek.waitForElm;
 
     // ".selectable-inputs-container" is used by both Discover and Library
-    // (each has its own filter row with that exact class name). We scope the
-    // search to whichever page's own top-level wrapper is relevant, rather
-    // than trusting the first match in the whole document, to avoid ever
-    // grabbing the wrong page's element.
-    function findScopedInputsContainer(wrapperSelector) {
-        const candidates = document.querySelectorAll('[class*="selectable-inputs-container-"]');
-        for (const el of candidates) {
-            if (el.closest(wrapperSelector)) return el;
-        }
-        return null;
-    }
-
-    function waitForScopedInputsContainer(wrapperSelector) {
-        return new Promise((resolve) => {
-            const existing = findScopedInputsContainer(wrapperSelector);
-            if (existing) return resolve(existing);
-
-            const observer = new MutationObserver(() => {
-                const el = findScopedInputsContainer(wrapperSelector);
-                if (el) {
-                    observer.disconnect();
-                    resolve(el);
-                }
-            });
-            observer.observe(document.body, { childList: true, subtree: true });
-        });
-    }
+    // (each has its own filter row with that exact class name). The shared
+    // kit's scoped lookup makes sure we never grab the wrong page's element.
+    const waitForScopedInputsContainer = (wrapperSelector) =>
+        sek.waitForScoped(wrapperSelector, '[class*="selectable-inputs-container-"]');
 
     function pickRandomItem(itemsContainer) {
         const items = Array.from(itemsContainer.querySelectorAll(ITEM_SELECTOR)).filter((el) => el.style.display !== "none");
