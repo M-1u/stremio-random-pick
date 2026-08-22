@@ -2,7 +2,7 @@
  * @name RandomPick
  * @description Adds a random-pick button to Discover and Library. Jumps to a random item among what's currently shown, respecting any filters from other plugins (folders, watched, etc.).
  * @updateUrl none
- * @version 1.0.8
+ * @version 1.0.9
  * @author M-1u
  */
 
@@ -118,6 +118,22 @@
                 } else {
                     inputsContainer.appendChild(el);
                 }
+            },
+            // Lets other plugins react to CollapsibleFilters' collapsed/expanded
+            // state (e.g. also shrinking their own UI) without any direct
+            // dependency between the plugin files - CollapsibleFilters calls
+            // notifyFiltersCollapsedChanged() whenever the user toggles it,
+            // and interested plugins subscribe via onFiltersCollapsedChanged().
+            FILTERS_COLLAPSED_KEY: "stremio-enhanced-filters-collapsed",
+            isFiltersCollapsed() {
+                return localStorage.getItem(this.FILTERS_COLLAPSED_KEY) === "true";
+            },
+            notifyFiltersCollapsedChanged() {
+                window.dispatchEvent(new CustomEvent("sek:filters-collapsed-changed"));
+            },
+            onFiltersCollapsedChanged(cb) {
+                window.addEventListener("sek:filters-collapsed-changed", cb);
+                return () => window.removeEventListener("sek:filters-collapsed-changed", cb);
             }
         };
 
