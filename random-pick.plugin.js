@@ -2,7 +2,7 @@
  * @name RandomPick
  * @description Adds a random-pick button to Discover and Library. Jumps to a random item among what's currently shown, respecting any filters from other plugins (folders, watched, etc.).
  * @updateUrl none
- * @version 1.0.1
+ * @version 1.0.7
  * @author meli & Claude
  */
 
@@ -84,6 +84,40 @@
                 style.id = "sek-filter-wrap-fix";
                 style.textContent = '[class*="selectable-inputs-container-"] { flex-wrap: wrap !important; row-gap: 10px; }';
                 document.head.appendChild(style);
+            },
+            // One shared look for every icon-only button any of these plugins
+            // adds to a filter row, sized/colored to match Stremio's own
+            // square icon buttons (the filter/layout icons already there)
+            // instead of each plugin inventing its own smaller, bordered
+            // button style.
+            ensureIconButtonStyle() {
+                if (document.getElementById("sek-icon-btn-style")) return;
+                const style = document.createElement("style");
+                style.id = "sek-icon-btn-style";
+                style.textContent = `
+                    .sek-icon-btn { display: inline-flex; align-items: center; justify-content: center; align-self: center; width: 40px; height: 40px; vertical-align: middle; background: rgba(255,255,255,0.08); color: #e4e4e9; border: none; border-radius: 10px; cursor: pointer; transition: background .15s ease, color .15s ease, transform .1s ease; user-select: none; flex-shrink: 0; }
+                    .sek-icon-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+                    .sek-icon-btn:hover { background: rgba(255,255,255,0.16); color: #fff; }
+                    .sek-icon-btn:active { transform: scale(0.94); }
+                    .sek-icon-btn.sek-icon-btn-active { background: rgba(123,91,245,0.35); color: #fff; }
+                `;
+                document.head.appendChild(style);
+            },
+            // On Library, the sort tabs ("A-Z", "Watched", etc.) live inside
+            // one single horizontally-scrolling wrapper, not as separate flex
+            // items - so appending our buttons after it always pushes them
+            // onto their own wrapped line below, even when there's visible
+            // room left. Inserting before that wrapper instead lets our
+            // buttons share the same line as the sort tabs, since the
+            // wrapper can shrink/scroll internally rather than needing fixed
+            // space of its own.
+            insertBeforeChips(inputsContainer, el) {
+                const chips = inputsContainer.querySelector('[class*="horizontal-scroll-"]');
+                if (chips) {
+                    inputsContainer.insertBefore(el, chips);
+                } else {
+                    inputsContainer.appendChild(el);
+                }
             }
         };
 
@@ -108,10 +142,7 @@
         const style = document.createElement("style");
         style.id = `${NS}-styles`;
         style.textContent = `
-            .${NS}-btn { display: inline-flex; align-items: center; gap: 7px; background: rgba(255,255,255,0.06); color: #e4e4e9; border: 1px solid rgba(255,255,255,0.12); border-radius: 7px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease, transform .1s ease; user-select: none; white-space: nowrap; flex-shrink: 0; margin-left: 1.5rem; }
-            .${NS}-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
-            .${NS}-btn:hover { background: rgba(123,91,245,0.18); border-color: rgba(123,91,245,0.5); color: #fff; }
-            .${NS}-btn:active { transform: scale(0.96); }
+            .${NS}-btn { margin-left: 8px; }
             .${NS}-btn.${NS}-spin svg { animation: ${NS}-spin 0.5s ease; }
             @keyframes ${NS}-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
             .${NS}-flash { outline: 3px solid #7B5BF5 !important; outline-offset: 2px; border-radius: 8px; animation: ${NS}-pulse 0.6s ease; }
@@ -119,6 +150,7 @@
         `;
         document.head.appendChild(style);
         sek.ensureFilterRowWrap();
+        sek.ensureIconButtonStyle();
     }
 
     const waitForElm = sek.waitForElm;
@@ -190,9 +222,10 @@
         if (!btn) {
             btn = document.createElement("span");
             btn.id = `${NS}-btn`;
-            btn.className = `${NS}-btn`;
-            btn.innerHTML = `${ICON_DICE}<span>Random pick</span>`;
-            inputsContainer.appendChild(btn);
+            btn.className = `sek-icon-btn ${NS}-btn`;
+            btn.title = "Random pick";
+            btn.innerHTML = ICON_DICE;
+            sek.insertBeforeChips(inputsContainer, btn);
         }
 
         const clickHandler = () => onPick(itemsContainer, btn);
