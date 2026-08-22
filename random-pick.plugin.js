@@ -2,8 +2,8 @@
  * @name RandomPick
  * @description Adds a random-pick button to Discover and Library. Jumps to a random item among what's currently shown, respecting any filters from other plugins (folders, watched, etc.).
  * @updateUrl none
- * @version 1.0.7
- * @author meli & Claude
+ * @version 1.0.8
+ * @author M-1u
  */
 
 (function () {
